@@ -72,7 +72,7 @@ if (title) {
   }
 }
 
-// Progress is tied to the reader's scroll position and reverses when scrolling up.
+// Reveal each rendered line as it crosses the reading area, even on tall phone copy.
 // Keep ordinary, fully readable paragraphs when JavaScript or motion is disabled.
 const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
 const revealBlocks = Array.from(document.querySelectorAll('[data-scroll-reveal]'));
@@ -94,19 +94,39 @@ if (revealBlocks.length) {
       }
       paragraph.replaceChildren(fragment);
     }
-    return { element, words };
+    return { element, words, positions: [] };
   });
   let framePending = false;
+  let measurePending = true;
+  const clamp = value => Math.max(0, Math.min(1, value));
+
+  function measureWords() {
+    for (const block of blocks) {
+      const bounds = block.element.getBoundingClientRect();
+      const lineHeight = parseFloat(getComputedStyle(block.element).lineHeight);
+      block.positions = block.words.map(word => {
+        const rect = word.getBoundingClientRect();
+        // Stagger words left to right within each line, then continue on the next.
+        return {
+          offset: rect.top - bounds.top + lineHeight * (rect.left - bounds.left) / Math.max(1, bounds.width),
+          fadeDistance: lineHeight * .7,
+        };
+      });
+    }
+    measurePending = false;
+  }
+
   function updateReveal() {
     framePending = false;
-    const height = window.innerHeight;
-    for (const { element, words } of blocks) {
+    if (measurePending) measureWords();
+    const viewport = window.visualViewport;
+    const readingLine = (viewport?.offsetTop || 0) + (viewport?.height || window.innerHeight) * .78;
+    for (const { element, words, positions } of blocks) {
       const bounds = element.getBoundingClientRect();
-      const progress = motionPreference.matches ? 1 : Math.max(0, Math.min(1,
-        (height * .85 - bounds.top) / (bounds.height + height * .3)));
-      const revealed = progress * (words.length + 3);
       words.forEach((word, index) => {
-        const opacity = .18 + .82 * Math.max(0, Math.min(1, (revealed - index) / 3));
+        const { offset, fadeDistance } = positions[index];
+        const progress = motionPreference.matches ? 1 : clamp((readingLine - bounds.top - offset) / fadeDistance);
+        const opacity = .18 + .82 * progress;
         word.style.opacity = opacity.toFixed(3);
       });
     }
@@ -114,11 +134,23 @@ if (revealBlocks.length) {
   function queueReveal() {
     if (!framePending) { framePending = true; requestAnimationFrame(updateReveal); }
   }
+  function queueMeasure() {
+    measurePending = true;
+    queueReveal();
+  }
   window.addEventListener('scroll', queueReveal, { passive:true });
-  window.addEventListener('resize', queueReveal);
-  window.addEventListener('pageshow', queueReveal);
-  motionPreference.addEventListener('change', queueReveal);
-  document.fonts.ready.then(queueReveal);
+  document.addEventListener('scroll', queueReveal, { passive:true, capture:true });
+  window.addEventListener('resize', queueMeasure);
+  window.addEventListener('pageshow', queueMeasure);
+  window.visualViewport?.addEventListener('resize', queueMeasure);
+  window.visualViewport?.addEventListener('scroll', queueReveal);
+  if (motionPreference.addEventListener) motionPreference.addEventListener('change', queueReveal);
+  else motionPreference.addListener(queueReveal);
+  document.fonts?.ready.then(queueMeasure);
+  if ('ResizeObserver' in window) {
+    const observer = new ResizeObserver(queueMeasure);
+    blocks.forEach(({ element }) => observer.observe(element));
+  }
   updateReveal();
 }
 
