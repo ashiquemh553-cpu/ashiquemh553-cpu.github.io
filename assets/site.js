@@ -72,6 +72,56 @@ if (title) {
   }
 }
 
+// Progress is tied to the reader's scroll position and reverses when scrolling up.
+// Keep ordinary, fully readable paragraphs when JavaScript or motion is disabled.
+const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
+const revealBlocks = Array.from(document.querySelectorAll('[data-scroll-reveal]'));
+if (revealBlocks.length) {
+  const blocks = revealBlocks.map(element => {
+    const words = [];
+    for (const paragraph of element.querySelectorAll('p')) {
+      const fragment = document.createDocumentFragment();
+      for (const token of paragraph.textContent.split(/(\s+)/)) {
+        if (!token) continue;
+        if (/^\s+$/.test(token)) fragment.append(document.createTextNode(token));
+        else {
+          const word = document.createElement('span');
+          word.className = 'reveal-word';
+          word.textContent = token;
+          words.push(word);
+          fragment.append(word);
+        }
+      }
+      paragraph.replaceChildren(fragment);
+    }
+    return { element, words };
+  });
+  let framePending = false;
+  function updateReveal() {
+    framePending = false;
+    const height = window.innerHeight;
+    for (const { element, words } of blocks) {
+      const bounds = element.getBoundingClientRect();
+      const progress = motionPreference.matches ? 1 : Math.max(0, Math.min(1,
+        (height * .85 - bounds.top) / (bounds.height + height * .3)));
+      const revealed = progress * (words.length + 3);
+      words.forEach((word, index) => {
+        const opacity = .18 + .82 * Math.max(0, Math.min(1, (revealed - index) / 3));
+        word.style.opacity = opacity.toFixed(3);
+      });
+    }
+  }
+  function queueReveal() {
+    if (!framePending) { framePending = true; requestAnimationFrame(updateReveal); }
+  }
+  window.addEventListener('scroll', queueReveal, { passive:true });
+  window.addEventListener('resize', queueReveal);
+  window.addEventListener('pageshow', queueReveal);
+  motionPreference.addEventListener('change', queueReveal);
+  document.fonts.ready.then(queueReveal);
+  updateReveal();
+}
+
 const filters = document.querySelector('.filters');
 if (filters) {
   const buttons = Array.from(filters.querySelectorAll('[data-filter]'));
